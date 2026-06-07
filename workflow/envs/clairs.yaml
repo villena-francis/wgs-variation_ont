@@ -1,0 +1,8 @@
+channels:
+    - conda-forge
+    - bioconda
+dependencies:
+    - clair3 =1.0.8
+    - python =3.9
+    - pytorch=1.11.0
+    - tqdm=4.66.5

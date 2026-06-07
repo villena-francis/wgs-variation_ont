@@ -1,0 +1,731 @@
+import os
+
+
+configfile: "config/config.yaml"
+
+
+def get_resource(rule, resource):
+    try:
+        return config["resources"][rule][resource]
+    except KeyError:
+        return config["resources"]["default"][resource]
+
+
+regions = {}
+with open(config["regions"]) as ifh:
+    fields = ["chrom","start","end","label","score","strand"]
+    for l in ifh:
+        data = l.rstrip("\n").split()
+        regions[data[3]] = dict(zip(fields,data))
+
+
+def input_main(wc):
+    o = []
+    for patient in config["samples"]:
+        o.append(f"results/methylartist_scoredist/{patient}.svg")
+        normal=False
+        for sampleid in config["samples"][patient]:
+            s = config["samples"][patient][sampleid]
+            if "normal" in s and s["normal"]:
+                normal = sampleid
+        for sampleid in config["samples"][patient]:
+            o.append(f"results/nanoplot/{patient}/{sampleid}/NanoPlot-report.html")
+            o.append(f"results/primary/{patient}/{sampleid}.cov")
+            o.append(f"results/mosdepth/{patient}/{sampleid}.mosdepth.global.dist.txt")
+            o.append(f"results/modkit/pileup/{patient}/{sampleid}.bed")
+            o.append(f"results/modkit/entropy/{patient}/{sampleid}/regions.bed")
+            o.append(f"results/modkit/calls/{patient}/{sampleid}.tsv")
+            o.append(f"results/sniffles/{patient}/{sampleid}.vcf.gz")
+            o.append(f"results/severus/{patient}/{sampleid}")
+            o.append(f"results/smoothcov/{patient}/{sampleid}.csv")
+            o.append(f"results/smoothmods/{patient}/{sampleid}.csv")
+            o.append(f"results/binsnvs/{patient}/{sampleid}.csv")
+
+            if normal and normal != sampleid:
+                o.append(f"results/clairs/{patient}/{sampleid}/output.vcf.gz")
+    if config["methylartist"]["enabled"]:
+        for patient in config["samples"]:
+            for label in regions:
+                for modtype in config["methylartist"]["mods"]:
+                    o.append(f"results/methylartist/{patient}/{label}.{modtype}.png")
+                for sampleid in config["samples"][patient]:
+                    o.append(f"results/methylartist_phased/{patient}/{label}.{sampleid}.png")
+    return o
+
+
+rule main:
+    input:
+        input_main,
+
+
+rule qsfilter:
+    input:
+        lambda wc: config["samples"][wc.patient][wc.sampleid]["bam"],
+    output:
+        "results/qsfilter/{patient}/{sampleid}.bam",
+    log:
+        "logs/qsfilter/{patient}/{sampleid}.log",
+    benchmark:
+        "logs/qsfilter/{patient}/{sampleid}.bmk"
+    params:
+        minq=config["minq"]
+    threads: get_resource("qsfilter", "threads")
+    resources:
+        mem_mb=get_resource("qsfilter", "mem_mb"),
+        runtime=get_resource("qsfilter", "runtime"),
+        slurm_partition=get_resource("qsfilter", "partition"),
+    conda:
+        "envs/samtools.yaml"
+    shell:
+        """
+        samtools view -e '[qs]>={params.minq}' {input} > {output} 2> {log}
+    """
+
+rule nanoplot:
+    input:
+    	"results/qsfilter/{patient}/{sampleid}.bam",
+    output:
+        folder = directory("results/nanoplot/{patient}/{sampleid}"),
+        report = "results/nanoplot/{patient}/{sampleid}/NanoPlot-report.html"
+    log:
+        "logs/nanoplot/{patient}/{sampleid}.log",
+    benchmark:
+        "logs/nanoplot/{patient}/{sampleid}.bmk"
+    threads: get_resource("nanoplot", "threads")
+    conda:
+        "envs/nanoplot.yaml"
+    resources:
+        mem_mb=get_resource("nanoplot", "mem_mb"),
+        runtime=get_resource("nanoplot", "runtime"),
+        slurm_partition=get_resource("nanoplot", "partition"),
+        slurm_extra=get_resource("nanoplot", "slurm_extra"),
+    shell:
+        """
+        NanoPlot -t {threads} --bam {input} -o {output.folder} > {log} 2>&1
+    """
+
+
+rule minimap2:
+    input:
+        reads="results/qsfilter/{patient}/{sampleid}.bam",
+        ref=lambda wc: config["ref"],
+    output:
+        "results/minimap2/{patient}/{sampleid}.bam",
+    log:
+        "logs/minimap2/{patient}/{sampleid}.log",
+    benchmark:
+        "logs/minimap2/{patient}/{sampleid}.bmk"
+    threads: get_resource("minimap2", "threads")
+    resources:
+        mem_mb=get_resource("minimap2", "mem_mb"),
+        runtime=get_resource("minimap2", "runtime"),
+        slurm_partition=get_resource("minimap2", "partition"),
+    conda:
+        "envs/minimap2.yaml"
+    shell:
+        """
+        samtools fastq -T "*" {input.reads} 2>> {log} | minimap2 -a -x map-ont -y -t {threads} {input.ref} - 2>> {log} | samtools sort - -o {output} >> {log} 2>&1
+        samtools index {output} >> {log} 2>&1
+    """
+
+
+rule primary:
+    input:
+        "results/minimap2/{patient}/{sampleid}.bam",
+    output:
+        bam="results/primary/{patient}/{sampleid}.bam",
+        bai="results/primary/{patient}/{sampleid}.bam.bai",
+    log:
+        "logs/primary/{patient}/{sampleid}.log",
+    benchmark:
+        "logs/primary/{patient}/{sampleid}.bmk"
+    threads: lambda wc: get_resource("primary", "threads")/2
+    resources:
+        mem_mb=get_resource("primary", "mem_mb"),
+        runtime=get_resource("primary", "runtime"),
+        slurm_partition=get_resource("primary", "partition"),
+    conda:
+        "envs/samtools.yaml"
+    shell:
+        """
+        samtools view -@ {threads} -F 2308 -b {input} | samtools sort -@ {threads} -o {output.bam} 2> {log}
+        samtools index {output.bam}
+    """
+
+
+def get_bams(wc):
+        for sampleid in config["samples"][wc.patient]:
+            yield f"results/primary/{wc.patient}/{sampleid}.bam"
+
+
+rule methylartist_scoredist:
+    input:
+        bams=get_bams,
+        ref="results/decompress_ref/ref.fa",
+    output:
+        "results/methylartist_scoredist/{patient}.svg",
+    log:
+        "logs/methylartist_scoredist/{patient}.log",
+    benchmark:
+        "logs/methylartist_scoredist/{patient}.bmk"
+    resources:
+        mem_mb=get_resource("methylartist_scoredist", "mem_mb"),
+        runtime=get_resource("methylartist_scoredist", "runtime"),
+        slurm_partition=get_resource("methylartist_scoredist", "partition"),
+    params:
+        bams=lambda wc: ",".join(get_bams(wc))
+    conda:
+        "envs/methylartist.yaml"
+    shell:
+        """
+        methylartist scoredist --ref {input.ref} --motif CG -b {params.bams} -o {output} -m m --svg &> {log}
+    """
+
+
+rule coverage:
+    input:
+        "results/primary/{patient}/{sampleid}.bam",
+    output:
+        "results/primary/{patient}/{sampleid}.cov",
+    log:
+        "logs/coverage/{patient}/{sampleid}.log",
+    benchmark:
+        "logs/coverage/{patient}/{sampleid}.bmk"
+    resources:
+        mem_mb=get_resource("coverage", "mem_mb"),
+        runtime=get_resource("coverage", "runtime"),
+        slurm_partition=get_resource("coverage", "partition"),
+    conda:
+        "envs/samtools.yaml"
+    shell:
+        """
+        samtools coverage -A -o {output} {input} &> {log}
+    """
+
+
+rule mosdepth:
+    input:
+        bam="results/primary/{patient}/{sampleid}.bam",
+        bai="results/primary/{patient}/{sampleid}.bam.bai",
+    output:
+        "results/mosdepth/{patient}/{sampleid}.mosdepth.global.dist.txt",
+        "results/mosdepth/{patient}/{sampleid}.mosdepth.region.dist.txt",
+        "results/mosdepth/{patient}/{sampleid}.per-base.bed.gz",
+        "results/mosdepth/{patient}/{sampleid}.regions.bed.gz",
+        summary="results/mosdepth/{patient}/{sampleid}.mosdepth.summary.txt",
+    log:
+        "logs/mosdepth/{patient}/{sampleid}.log",
+    benchmark:
+        "logs/mosdepth/{patient}/{sampleid}.bmk"
+    threads: get_resource("mosdepth", "threads")
+    resources:
+        mem_mb=get_resource("mosdepth", "mem_mb"),
+        runtime=get_resource("mosdepth", "runtime"),
+        slurm_partition=get_resource("mosdepth", "partition"),
+    params:
+        extra="--fast-mode",
+        by="1000",
+    wrapper:
+        "v5.2.1/bio/mosdepth"
+
+
+rule modkit_pileup:
+    input:
+        bam="results/primary/{patient}/{sampleid}.bam",
+        bai="results/primary/{patient}/{sampleid}.bam.bai",
+    output:
+        bed="results/modkit/pileup/{patient}/{sampleid}.bed",
+    log:
+        o="logs/modkit/pileup/{patient}/{sampleid}.log",
+        d="logs/modkit/pileup/{patient}/{sampleid}.dbg",
+    benchmark:
+        "logs/modkit/pileup/{patient}/{sampleid}.bmk"
+    conda: "envs/modkit.yaml"
+    threads: get_resource("modkit_pileup", "threads"),
+    resources:
+        mem_mb=get_resource("modkit_pileup", "mem_mb"),
+        runtime=get_resource("modkit_pileup", "runtime"),
+        slurm_partition=get_resource("modkit_pileup", "partition"),
+    shell:"""
+        modkit pileup {input.bam} {output.bed} \
+          --threads {threads} \
+          --log-filepath {log.d} > {log.o} 2>&1
+    """
+
+
+rule regulatory_noname:
+    input:
+        bed=config["regulatory"],
+    output:
+        bed="results/regulatory_noname/regions.bed"
+    log:
+        "logs/regulatory_noname/regions.log"
+    shell:"""
+        cut -f1-3 {input.bed} > {output.bed} 2> {log}
+    """
+
+
+rule modkit_entropy:
+    input:
+        bam="results/primary/{patient}/{sampleid}.bam",
+        bai="results/primary/{patient}/{sampleid}.bam.bai",
+        ref="results/decompress_ref/ref.fa",
+        regions=config["regulatory"],
+    output:
+        regions="results/modkit/entropy/{patient}/{sampleid}/regions.bed",
+        windows="results/modkit/entropy/{patient}/{sampleid}/windows.bedgraph",
+    log:
+        o="logs/modkit/entropy/{patient}/{sampleid}.log",
+        d="logs/modkit/entropy/{patient}/{sampleid}.dbg",
+    benchmark:
+        "logs/modkit/entropy/{patient}/{sampleid}.bmk"
+    conda: "envs/modkit.yaml"
+    threads: get_resource("modkit_entropy", "threads"),
+    resources:
+        mem_mb=get_resource("modkit_entropy", "mem_mb"),
+        runtime=get_resource("modkit_entropy", "runtime"),
+        slurm_partition=get_resource("modkit_entropy", "partition"),
+    params:
+        outdir=lambda wildcards, output: os.path.dirname(output.regions)
+    shell:"""
+        modkit entropy -s {input.bam} \
+          -o {params.outdir} \
+          --ref {input.ref} \
+          --regions {input.regions} \
+          --cpg \
+          --window-size 100 \
+          --threads {threads} \
+          --log-filepath {log.d} \
+          --verbose-logging > {log.o} 2>&1
+    """
+
+
+rule modkit_extract_calls:
+    input:
+        bam="results/primary/{patient}/{sampleid}.bam",
+        bai="results/primary/{patient}/{sampleid}.bam.bai",
+        ref="results/decompress_ref/ref.fa",
+        regulatory="results/regulatory_noname/regions.bed"
+    output:
+        tsv="results/modkit/calls/{patient}/{sampleid}.tsv",
+    log:
+        o="logs/modkit/calls/{patient}/{sampleid}.log",
+        d="logs/modkit/calls/{patient}/{sampleid}.dbg",
+    benchmark:
+        "logs/modkit/calls/{patient}/{sampleid}.bmk"
+    conda: "envs/modkit.yaml"
+    threads: get_resource("modkit_extract_calls", "threads"),
+    resources:
+        mem_mb=get_resource("modkit_extract_calls", "mem_mb"),
+        runtime=get_resource("modkit_extract_calls", "runtime"),
+        slurm_partition=get_resource("modkit_extract_calls", "partition"),
+    shell:"""
+        modkit extract calls {input.bam} {output.tsv} \
+          --reference {input.ref} \
+          --include-bed {input.regulatory} \
+          --threads {threads} \
+          --log-filepath {log.d} > {log.o} 2>&1
+    """
+
+
+rule decompress_ref:
+    input:
+        ref=config["ref"],
+    output:
+        ref="results/decompress_ref/ref.fa",
+        idx="results/decompress_ref/ref.fa.fai"
+    log:
+        "logs/decompress_ref/ref.out",
+    conda: "envs/samtools.yaml"
+    shell:"""
+        gunzip -c {input.ref} > {output.ref} 2> {log}
+        samtools faidx {output.ref} 2>> {log}
+    """
+
+
+def get_region(wc):
+    region = regions[wc.label]
+    chrom = region['chrom']
+    start = int(region['start']) - 5000
+    end = int(region['end']) + 5000
+    return f"{chrom}:{start}-{end}"
+
+
+def get_colored_bams(wc, input):
+    bamc = []
+    for bam in input.bams:
+        sid = os.path.splitext(os.path.basename(bam))[0]
+        try:
+            colour = config["samples"][wc.patient][sid]["colour"]
+            bamc.append(f"{bam}:{colour}")
+        except KeyError:
+            bamc.append(bam)
+    return ",".join(bamc)
+
+
+def get_time_retry(wc, attempt):
+    return attempt * get_resource("methylartist", "runtime")
+
+
+rule methylartist:
+    input:
+        bams=get_bams,
+        ann=config["ann"],
+        ref="results/decompress_ref/ref.fa",
+        hl="results/regulatory_noname/regions.bed",
+    output:
+        png="results/methylartist/{patient}/{label}.{modtype}.png"
+    log:
+        o="logs/methylartist/{patient}/{label}.{modtype}.out",
+        e="logs/methylartist/{patient}/{label}.{modtype}.err",
+    benchmark:
+        "logs/methylartist/{patient}/{label}.{modtype}.bmk"
+    params:
+        reg=get_region,
+        bams=get_colored_bams,
+    conda: "envs/methylartist.yaml"
+    threads: get_resource("methylartist", "threads"),
+    resources:
+        mem_mb=get_resource("methylartist", "mem_mb"),
+        runtime=get_time_retry,
+        slurm_partition=get_resource("methylartist", "partition"),
+    retries: 4
+    shell:"""
+        methylartist locus \
+                -b {params.bams} \
+                -g {input.ann} \
+                -p {threads} \
+                -n CG \
+                --mods {wildcards.modtype} \
+                --labelgenes \
+                -r {input.ref} \
+                -o {output.png} \
+                --highlight_bed {input.hl} \
+                -i "{params.reg}" \
+                --panelratios 1,5,1,3,3 \
+                > {log.o} 2> {log.e}
+    """
+
+
+rule methylartist_phased:
+    input:
+        bam="results/clair3/{patient}/{sampleid}/phased_output.bam",
+        ann=config["ann"],
+        ref="results/decompress_ref/ref.fa",
+        hl="results/regulatory_noname/regions.bed",
+    output:
+        png="results/methylartist_phased/{patient}/{label}.{sampleid}.png"
+    log:
+        o="logs/methylartist_phased/{patient}/{label}.{sampleid}.out",
+        e="logs/methylartist_phased/{patient}/{label}.{sampleid}.err",
+    benchmark:
+        "logs/methylartist_phased/{patient}/{label}.{sampleid}.bmk"
+    params:
+        reg=get_region,
+    conda: "envs/methylartist.yaml"
+    threads: get_resource("methylartist", "threads"),
+    resources:
+        mem_mb=get_resource("methylartist", "mem_mb"),
+        runtime=get_resource("methylartist", "runtime"),
+        slurm_partition=get_resource("methylartist", "partition"),
+    shell:"""
+        methylartist locus \
+                -b {input.bam} \
+                -g {input.ann} \
+                -p {threads} \
+                -n CG \
+                --labelgenes \
+                -r {input.ref} \
+                --phased \
+                -o {output.png} \
+                --highlight_bed {input.hl} \
+                -i "{params.reg}" \
+                --panelratios 1,5,1,3,3 \
+                > {log.o} 2> {log.e}
+    """
+
+
+rule sniffles:
+    input:
+        bam="results/primary/{patient}/{sampleid}.bam",
+        ref="results/decompress_ref/ref.fa",
+    output:
+        vcf="results/sniffles/{patient}/{sampleid}.vcf.gz",
+    log:
+        "logs/sniffles/{patient}/{sampleid}.log",
+    benchmark:
+        "logs/sniffles/{patient}/{sampleid}.bmk"
+    threads: get_resource("sniffles", "threads"),
+    resources:
+        mem_mb=get_resource("sniffles", "mem_mb"),
+        runtime=get_resource("sniffles", "runtime"),
+        slurm_partition=get_resource("sniffles", "partition"),
+    conda: "envs/sniffles.yaml"
+    shell:"""
+        sniffles --input {input.bam} --vcf {output.vcf} -t {threads} --reference {input.ref} --mosaic --mosaic-include-germline &> {log}
+    """
+
+
+rule clair3:
+    input:
+        bam="results/primary/{patient}/{sampleid}.bam",
+        ref="results/decompress_ref/ref.fa",
+        idx="results/decompress_ref/ref.fa.fai",
+    output:
+        full="results/clair3/{patient}/{sampleid}/full_alignment.vcf.gz",
+        merge="results/clair3/{patient}/{sampleid}/merge_output.vcf.gz",
+        pileup="results/clair3/{patient}/{sampleid}/pileup.vcf.gz",
+        phased_vcf="results/clair3/{patient}/{sampleid}/phased_merge_output.vcf.gz",
+        phased_bam="results/clair3/{patient}/{sampleid}/phased_output.bam",
+    log:
+        "logs/clair3/{patient}/{sampleid}.log",
+    benchmark:
+        "logs/clair3/{patient}/{sampleid}.bmk"
+    threads: get_resource("clair3", "threads"),
+    resources:
+        mem_mb=get_resource("clair3", "mem_mb"),
+        runtime=get_resource("clair3", "runtime"),
+        slurm_partition=get_resource("clair3", "partition"),
+    params:
+        model=config["clair3_model"]
+    conda: "envs/clair3.yaml"
+    shell: """
+      run_clair3.sh \
+          --bam_fn={input.bam} \
+          --ref_fn={input.ref} \
+          --threads={threads} \
+          --platform="ont" \
+          --model_path="{params.model}" \
+          --output=$(dirname {output.full}) \
+          --enable_phasing \
+          --include_all_ctgs \
+          --use_whatshap_for_intermediate_phasing \
+          --use_whatshap_for_final_output_phasing \
+          --use_whatshap_for_final_output_haplotagging &> {log}
+    """
+
+
+def get_normal_severus(wc):
+    """use 'normal' sample as control if available"""
+
+    for sample in config["samples"][wc.patient]:
+        s = config["samples"][wc.patient][sample]
+        # check that there's a control sample for the patient, and that it's not
+        # the same sample as the target
+        if sample != wc.sampleid and "normal" in s and s["normal"]:
+            return f" --control-bam results/clair3/{wc.patient}/{sample}/phased_output.bam"
+    return ""
+
+
+rule severus:
+    input:
+        vcf="results/clair3/{patient}/{sampleid}/phased_merge_output.vcf.gz",
+        bam_tumour="results/clair3/{patient}/{sampleid}/phased_output.bam",
+    output:
+        directory("results/severus/{patient}/{sampleid}")
+    log:
+        "logs/severus/{patient}/{sampleid}.log",
+    benchmark:
+        "logs/severus/{patient}/{sampleid}.bmk"
+    threads: get_resource("severus", "threads"),
+    resources:
+        mem_mb=get_resource("severus", "mem_mb"),
+        runtime=get_resource("severus", "runtime"),
+        slurm_partition=get_resource("severus", "partition"),
+    params:
+        vntrs=config["severus_vntrs"],
+        bam_normal=get_normal_severus,
+    conda: "envs/severus.yaml"
+    shell: """
+        ln -sf $(basename {input.bam_tumour}) $(dirname {input.bam_tumour})/tumour.bam
+        ln -sf $(basename {input.bam_tumour}).bai $(dirname {input.bam_tumour})/tumour.bam.bai
+        severus \
+            --target-bam $(dirname {input.bam_tumour})/tumour.bam {params.bam_normal} \
+            --out-dir {output}  \
+            -t {threads} \
+            --phasing-vcf {input.vcf} \
+            --vntr-bed {params.vntrs} &> {log}
+    """
+
+
+def get_normal_bam(wc):
+    """use 'normal' sample as control if available"""
+
+    for sample in config["samples"][wc.patient]:
+        s = config["samples"][wc.patient][sample]
+        # check that there's a control sample for the patient, and that it's not
+        # the same sample as the target
+        if sample != wc.sampleid and "normal" in s and s["normal"]:
+            return f"results/primary/{wc.patient}/{sample}.bam"
+
+    raise ValueError("Couldn't locate normal sample")
+
+
+rule clairs:
+    input:
+        bam_tumour="results/primary/{patient}/{sampleid}.bam",
+        bam_normal = lambda wc : get_normal_bam,
+        ref="results/decompress_ref/ref.fa",
+    output:
+        "results/clairs/{patient}/{sampleid}/output.vcf.gz"
+    log:
+        "logs/clairs/{patient}/{sampleid}.log",
+    benchmark:
+        "logs/clairs/{patient}/{sampleid}.bmk",
+    threads: get_resource("clairs", "threads")
+    resources:
+        mem_mb=get_resource("clairs", "mem_mb"),
+        runtime=get_resource("clairs", "runtime"),
+        slurm_partition=get_resource("clairs", "partition")
+    container: "docker://hkubal/clairs:latest" 
+    shell:"""
+        run_clairs \
+            --tumor_bam_fn /{input.bam_tumour} \
+            --normal_bam_fn /{input.bam_normal} \
+            --ref_fn /{input.ref} \
+            --threads {threads} \
+            -p ont_r10_dorado_sup_5khz \
+            -P /models/r1041_e82_400bps_sup_v420/pileup.pkl \
+            -F /models/r1041_e82_400bps_sup_v420/full_alignment.pkl \
+            --clair3_model_path /models/clair3_models/r1041_e82_400bps_sup_v420 \
+            --include_all_ctgs \
+            --output_dir $(dirname /{output}) \
+            --conda_prefix /opt/conda/envs/clairs > {log} 2>&1
+    """
+
+
+def get_vcf_normal_phased(wc):
+    """use the 'normal' sample for tumor-normal mode; if not available, 
+    use tumor-only mode"""
+
+    for sample in config["samples"][wc.patient]:
+        s = config["samples"][wc.patient][sample]
+        # check that there's a control sample for the patient, and that it's not
+        # the same sample as the target
+        if "normal" in s and s["normal"] and sample != wc.sampleid:
+            return f" --normal-phased-vcf results/clair3/{wc.patient}/{sample}/phased_merge_output.vcf.gz"
+    
+    return f" --tumor-phased-vcf results/clair3/{wc.patient}/{wc.sampleid}/phased_merge_output.vcf.gz"
+
+
+def get_breakpoints(wc):
+    """use severus_somatic.vcf for tumor-normal mode; 
+    if not available, use severus_all.vcf"""
+
+    for sample in config["samples"][wc.patient]:
+        s = config["samples"][wc.patient][sample]
+        # check that there's a control sample for the patient, and that it's not
+        # the same sample as the target
+        if sample != wc.sampleid and "normal" in s and s["normal"]:
+            return f"--breakpoints results/severus/{wc.patient}/{wc.sampleid}/somatic_SVs/severus_somatic.vcf"
+
+    return f" --breakpoints results/severus/{wc.patient}/{wc.sampleid}/all_SVs/severus_all.vcf"  
+
+
+rule wakhan:
+    input:
+        bam_tumour="results/primary/{patient}/{sampleid}.bam",
+        ref="results/decompress_ref/ref.fa",
+        severus_dir="results/severus/{patient}/{sampleid}",
+        target_genes=config["wakhan_targets"]
+    output:
+        directory("results/wakhan/{patient}/{sampleid}")
+    log:
+        "logs/wakhan/{patient}/{sampleid}.log"
+    benchmark:
+        "logs/wakhan/{patient}/{sampleid}.bmk"
+    threads: get_resource("wakhan", "threads")
+    resources:
+        mem_mb=get_resource("wakhan", "mem_mb"),
+        runtime=get_resource("wakhan", "runtime"),
+        slurm_partition=get_resource("wakhan", "partition")
+    params:
+        vcf_normal_phased=get_vcf_normal_phased,
+        cut_threshold=config["wakhan"]["cut_threshold"],
+        breakpoints=get_breakpoints,
+        contigs=config["wakhan"]["contigs"]
+    conda:
+        "envs/wakhan.yaml"
+    shell:"""
+        wakhan all \
+            --threads {threads} \
+            --reference {input.ref} \
+            --target-bam {input.bam_tumour} \
+            {params.vcf_normal_phased} \
+            --genome-name {wildcards.sampleid} \
+            --out-dir-plots {output} \
+            {params.breakpoints} \
+            --cut-threshold {params.cut_threshold} \
+            --user-input-genes {input.target_genes} \
+            --contigs {params.contigs} \
+            --cpd-internal-segments \
+            --pdf-enable &> {log}
+    """
+
+
+rule smoothcov:
+    input:
+        bed="results/mosdepth/{patient}/{sampleid}.per-base.bed.gz"
+    output:
+        "results/smoothcov/{patient}/{sampleid}.csv"
+    log:
+        "logs/smoothcov/{patient}/{sampleid}.log"
+    benchmark:
+        "logs/smoothcov/{patient}/{sampleid}.bmk"
+    resources:
+        mem_mb=get_resource("smoothcov", "mem_mb"),
+        runtime=get_resource("smoothcov", "runtime"),
+        slurm_partition=get_resource("smoothcov", "partition")
+    params:
+        bin=config["smoothtools"]["bin"],
+        chunk=config["smoothtools"]["chunk"],
+        spike=config["smoothtools"]["spike"],
+        smooth=config["smoothtools"]["smooth"]
+    conda:
+        "envs/smoothtools.yaml"
+    script:
+        "scripts/smoothcov.py"
+
+
+rule smoothmods:
+    input:
+        bed="results/modkit/pileup/{patient}/{sampleid}.bed"
+    output:
+        "results/smoothmods/{patient}/{sampleid}.csv"
+    log:
+        "logs/smoothmods/{patient}/{sampleid}.log"
+    benchmark:
+        "logs/smoothmods/{patient}/{sampleid}.bmk"
+    resources:
+        mem_mb=get_resource("smoothmods", "mem_mb"),
+        runtime=get_resource("smoothmods", "runtime"),
+        slurm_partition=get_resource("smoothmods", "partition")
+    params:
+        bin=config["smoothtools"]["bin"],
+        chunk=config["smoothtools"]["chunk"],
+    conda:
+        "envs/smoothtools.yaml"
+    script:
+        "scripts/smoothmods.py"
+
+
+rule binsnvs:
+    input:
+        vcf="results/clair3/{patient}/{sampleid}/phased_merge_output.vcf.gz"
+    output:
+        "results/binsnvs/{patient}/{sampleid}.csv"
+    log:
+        "logs/binsnvs/{patient}/{sampleid}.log"
+    benchmark:
+        "logs/binsnvs/{patient}/{sampleid}.bmk"
+    resources:
+        mem_mb=get_resource("binsnvs", "mem_mb"),
+        runtime=get_resource("binsnvs", "runtime"),
+        slurm_partition=get_resource("binsnvs", "partition")
+    params:
+        bin=config["smoothtools"]["bin"],
+        chrom_sizes=config["chrom_sizes"]
+    conda:
+        "envs/smoothtools.yaml"
+    script:
+        "scripts/binsnvs.py"

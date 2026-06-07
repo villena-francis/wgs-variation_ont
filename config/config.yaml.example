@@ -1,0 +1,93 @@
+# Reference files
+ref: "/path/to/reference/genome.fa.gz"
+ann: "/path/to/annotation/gencode.v45.gtf.gz"
+regions: "/path/to/regions/targets.bed"
+regulatory: "/path/to/highlights/promoters.bed"
+encode_blacklist: "/path/to/blacklist/encode_blacklist.bed.gz"
+severus_vntrs: "/path/to/vntrs/human_trf.bed"
+chrom_sizes: "/path/to/chrom_info/hg38.chrom.sizes"
+wakhan_targets: "/path/to/list_of_genes/targets.bed
+
+# Tool paths
+modkit_bin: "/path/to/modkit_v0.6.1_u16_x86_64/modkit"
+clair3_model: "/path/to/clair3/r1041_e82_400bps_sup_v420"
+
+# Analysis parameters
+minq: 9
+methylartist:
+  enabled: True
+  mods: ["m", "h"]
+smoothtools:
+    bin: 1000000
+    chunk: 500000
+    spike: 100
+    smooth: 3
+
+# Samples hierarchical structure
+samples:
+  PATIENT1:
+    PATIENT1_normal:
+      bam: "/path/to/patient1/normal/bam"
+      colour: "#D40000"
+      normal: True
+    PATIENT1_tumor:
+      bam: "/path/to/patient1/tumor/bam"
+      colour: "#3366CC"
+  PATIENT2:
+    PATIENT2_normal:
+      bam: "/path/to/patient2/normal/bam"
+      colour: "#D40000"
+      normal: True
+    PATIENT2_before_treatment:
+      bam: "/path/to/patient2/before_treatment/bam"
+      colour: "#3366CC"
+    PATIENT2_after_treatment:
+      bam: "/path/to/patient2/after_treatment/bam"
+      colour: "#009E73"
+  CELL_LINES:
+    wild_type:
+      bam: "/path/to/celllines/wildtype/bam"
+      colour: "#359B73"
+    knockout:
+      bam: "/path/to/celllines/knockout/bam"
+      colour: "#2271B2"
+    resistant:
+      bam: "/path/to/celllines/resistant/bam"
+      colour: "#3DB7E9"
+
+# Resource specifications for different steps
+resources:
+  default:
+    partition: main
+    threads: 2
+    mem_mb: 8000
+    runtime: 30
+    slurm_extra: ""
+    params_extra: ""
+  nanoplot:
+    runtime: 45
+  clair3:
+    runtime: 420
+    mem_mb: 64000
+    threads: 24
+    params_extra: "/path/to/clair3"
+  wakhan:
+    partition: main
+    threads: 12
+    mem_mb: 24000
+    runtime: 240
+  smoothcov:
+    partition: short
+    threads: 8
+    mem_mb: 18000
+    runtime: 30
+  smoothmods:
+    partition: short
+    threads: 8
+    mem_mb: 18000
+    runtime: 30
+  binsnvs:
+    partition: short
+    threads: 8
+    mem_mb: 18000
+    runtime: 30

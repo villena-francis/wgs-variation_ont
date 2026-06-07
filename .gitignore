@@ -1,0 +1,9 @@
+!.gitignore
+__pycache__/
+!config/config.*.yaml.example
+config/config.*.yaml
+config/config.yaml
+logs/
+resources/
+.snakemake*
+results
