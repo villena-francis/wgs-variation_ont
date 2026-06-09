@@ -29,8 +29,8 @@ def input_main(wc):
             if "normal" in s and s["normal"]:
                 normal = sampleid
         for sampleid in config["samples"][patient]:
-            o.append(f"results/nanoplot/{patient}/{sampleid}/NanoPlot-report.html")
             o.append(f"results/primary/{patient}/{sampleid}.cov")
+            o.append(f"results/nanoplot/{patient}/{sampleid}/NanoPlot-report.html")
             o.append(f"results/mosdepth/{patient}/{sampleid}.mosdepth.global.dist.txt")
             o.append(f"results/modkit/pileup/{patient}/{sampleid}.bed")
             o.append(f"results/modkit/entropy/{patient}/{sampleid}/regions.bed")
@@ -81,29 +81,6 @@ rule qsfilter:
         samtools view -e '[qs]>={params.minq}' {input} > {output} 2> {log}
     """
 
-rule nanoplot:
-    input:
-    	"results/qsfilter/{patient}/{sampleid}.bam",
-    output:
-        folder = directory("results/nanoplot/{patient}/{sampleid}"),
-        report = "results/nanoplot/{patient}/{sampleid}/NanoPlot-report.html"
-    log:
-        "logs/nanoplot/{patient}/{sampleid}.log",
-    benchmark:
-        "logs/nanoplot/{patient}/{sampleid}.bmk"
-    threads: get_resource("nanoplot", "threads")
-    conda:
-        "envs/nanoplot.yaml"
-    resources:
-        mem_mb=get_resource("nanoplot", "mem_mb"),
-        runtime=get_resource("nanoplot", "runtime"),
-        slurm_partition=get_resource("nanoplot", "partition"),
-        slurm_extra=get_resource("nanoplot", "slurm_extra"),
-    shell:
-        """
-        NanoPlot -t {threads} --bam {input} -o {output.folder} > {log} 2>&1
-    """
-
 
 rule minimap2:
     input:
@@ -150,6 +127,30 @@ rule primary:
         """
         samtools view -@ {threads} -F 2308 -b {input} | samtools sort -@ {threads} -o {output.bam} 2> {log}
         samtools index {output.bam}
+    """
+
+
+rule nanoplot:
+    input:
+    	"results/primary/{patient}/{sampleid}.bam",
+    output:
+        folder = directory("results/nanoplot/{patient}/{sampleid}"),
+        report = "results/nanoplot/{patient}/{sampleid}/NanoPlot-report.html"
+    log:
+        "logs/nanoplot/{patient}/{sampleid}.log",
+    benchmark:
+        "logs/nanoplot/{patient}/{sampleid}.bmk"
+    threads: get_resource("nanoplot", "threads")
+    conda:
+        "envs/nanoplot.yaml"
+    resources:
+        mem_mb=get_resource("nanoplot", "mem_mb"),
+        runtime=get_resource("nanoplot", "runtime"),
+        slurm_partition=get_resource("nanoplot", "partition"),
+        slurm_extra=get_resource("nanoplot", "slurm_extra"),
+    shell:
+        """
+        NanoPlot -t {threads} --bam {input} -o {output.folder} > {log} 2>&1
     """
 
 

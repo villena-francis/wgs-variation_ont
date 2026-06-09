@@ -61,15 +61,15 @@ snakemake --use-conda --cores <N>
 
 For cluster environments using Slurm:
 ```bash
-snakemake --use-conda --profile slurm
+snakemake --use-conda --executor slurm
 ```
 
 ## Pipeline Steps
 
 1. **Basecalling**: Convert raw POD5 files to BAM format with Dorado, including modified base detection
-2. **Quality Control**: Generate QC metrics and reports with PycoQC
-3. **Quality Filtering**: Filter reads based on quality score
-4. **Alignment**: Map reads to reference genome with Minimap2
+2. **Quality Filtering**: Filter reads based on quality score
+3. **Alignment**: Map reads to reference genome with Minimap2
+4. **Quality Control**: Generate QC metrics and reports with NanoPlot
 5. **Coverage Analysis**: Generate coverage statistics with Mosdepth and samtools
 6. **Methylation Analysis**:
    - Extract methylation information with Modkit
@@ -87,9 +87,9 @@ The pipeline generates results in a hierarchical directory structure:
 
 ```
 results/
-├── nanoplot/              # Quality control reports
 ├── minimap2/              # Aligned reads
 ├── primary/               # Filtered primary alignments
+├── nanoplot/              # Quality control reports
 ├── mosdepth/              # Coverage statistics
 ├── modkit/                # Methylation data
 ├── methylartist/          # Methylation visualizations
