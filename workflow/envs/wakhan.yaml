@@ -1,1 +1,5 @@
-wakhan==0.4.3
+channels:
+    - conda-forge
+    - bioconda
+dependencies:
+    - wakhan==0.4.3
