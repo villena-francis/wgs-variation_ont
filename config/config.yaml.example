@@ -17,6 +17,9 @@ minq: 9
 methylartist:
   enabled: True
   mods: ["m", "h"]
+wakhan:
+  cut_threshold: 50
+  contigs: chr1-22
 smoothtools:
     bin: 1000000
     chunk: 500000

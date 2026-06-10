@@ -37,6 +37,7 @@ def input_main(wc):
             o.append(f"results/modkit/calls/{patient}/{sampleid}.tsv")
             o.append(f"results/sniffles/{patient}/{sampleid}.vcf.gz")
             o.append(f"results/severus/{patient}/{sampleid}")
+            o.append(f"results/wakhan/{patient}/{sampleid}")
             o.append(f"results/smoothcov/{patient}/{sampleid}.csv")
             o.append(f"results/smoothmods/{patient}/{sampleid}.csv")
             o.append(f"results/binsnvs/{patient}/{sampleid}.csv")
