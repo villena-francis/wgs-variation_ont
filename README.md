@@ -3,6 +3,7 @@
 ## Overview
 
 This Snakemake workflow analyzes Oxford Nanopore Technologies (ONT) whole genome sequencing data, covering genomic and epigenomic variation. It takes pre-basecalled BAM files as input (basecalling is handled by a separate pipeline, [basecalling_ont](https://github.com/villena-francis/basecalling_ont)) and performs alignment, methylation analysis, and structural variant detection.
+> This pipeline is based on the workflow originally developed by [@tdido](https://github.com/tdido) in [cnio-bu/myeloma-epi-sv](https://github.com/cnio-bu/myeloma-epi-sv).
 
 ## Features
 
