@@ -21,10 +21,10 @@ wakhan:
   cut_threshold: 50
   contigs: chr1-22
 smoothtools:
-    bin: 1000000
-    chunk: 500000
-    spike: 100
-    smooth: 3
+  bin: 1000000
+  chunk: 500000
+  spike: 100
+  smooth: 3
 
 # Samples hierarchical structure
 samples:
@@ -67,13 +67,81 @@ resources:
     runtime: 30
     slurm_extra: ""
     params_extra: ""
+  minimap2:
+    threads: 16
+    mem_mb: 64000
+    runtime: 1440
+  primary:
+    threads: 16
+    mem_mb: 64000
+    runtime: 720
   nanoplot:
-    runtime: 45
+    threads: 16
+    mem_mb: 64000
+    runtime: 120
+  mosdepth:
+    runtime: 60
+    threads: 16
+  coverage:
+    runtime: 240
+    mem_mb: 64000
+  modkit_pileup:
+    runtime: 720
+    mem_mb: 64000
+    threads: 30
+  modkit_entropy:
+    runtime: 30
+    mem_mb: 16000
+    threads: 16
+  modkit_extract_calls:
+    runtime: 120
+    mem_mb: 24000
+    threads: 16
+  modkit_entropy_genome:
+    runtime: 120
+    mem_mb: 16000
+    threads: 16
+  modkit_tabix:
+    runtime: 240
+    mem_mb: 64000
+    threads: 1
+  modkit_dmr:
+    runtime: 720
+    mem_mb: 96000
+    threads: 26
+  sniffles:
+    runtime: 240
+    mem_mb: 64000
+    threads: 16
+  nanovar:
+    runtime: 240
+    mem_mb: 64000
+    threads: 16
+  methylartist:
+    runtime: 30
+    mem_mb: 64000
+  methylartist_wgmeth:
+    runtime: 720
+    mem_mb: 64000
+    threads: 24
   clair3:
     runtime: 420
     mem_mb: 64000
     threads: 24
-    params_extra: "/path/to/clair3"
+  clairs:
+    runtime: 420
+    mem_mb: 64000
+    threads: 24
+  severus:
+    runtime: 300
+    mem_mb: 64000
+    threads: 52
+  bam_to_tabix:
+    runtime: 1440
+    mem_mb: 128000
+    threads: 4
+  qsfilter:
+    runtime: 120
   wakhan:
     partition: main
     threads: 12
